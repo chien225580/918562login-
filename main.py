@@ -7,7 +7,7 @@ from flask_cors import CORS
 
 app = Flask(__name__)
 
-# 🔐 Bật CORS cho mọi origin (Cocos / Web / Android)
+# 🔐 Bật CORS cho mọi origin
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 DATA_FILE = "users.json"
@@ -16,6 +16,9 @@ PORT = int(os.environ.get("PORT", 3000))
 # ⏱ Chống spam đăng ký
 LAST_REQUEST = {}
 REQUEST_DELAY = 5  # giây
+
+# 🔑 Khoá admin (ĐỔI CHUỖI NÀY)
+ADMIN_KEY = "12131415"
 
 # ------------------ UTILS ------------------
 
@@ -42,6 +45,12 @@ def client_ip():
 def home():
     return "Render Server Online"
 
+# 🔄 Ping giữ server sống
+@app.route("/ping")
+def ping():
+    return jsonify({"status": "ok", "time": int(time.time())})
+
+# 📝 Đăng ký
 @app.route("/register", methods=["POST"])
 def register():
     ip = client_ip()
@@ -102,6 +111,34 @@ def register():
     return jsonify({
         "success": True,
         "msg": "Đăng ký thành công"
+    })
+
+# 👮 ADMIN XEM USER (MIỄN PHÍ – KHÔNG CẦN SHELL)
+@app.route("/admin/users", methods=["GET"])
+def admin_users():
+    key = request.args.get("key")
+
+    if key != ADMIN_KEY:
+        return jsonify({
+            "success": False,
+            "msg": "Không có quyền truy cập"
+        })
+
+    users = load_users()
+
+    # Ẩn mật khẩu khi trả về
+    safe_users = []
+    for u in users:
+        safe_users.append({
+            "username": u["username"],
+            "phone": u["phone"],
+            "created_at": u["created_at"]
+        })
+
+    return jsonify({
+        "success": True,
+        "total": len(safe_users),
+        "users": safe_users
     })
 
 # ------------------ RUN ------------------
