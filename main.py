@@ -2,20 +2,19 @@ import os
 import json
 import time
 import hashlib
+import secrets
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
-
-# 🔐 Bật CORS cho mọi origin
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 DATA_FILE = "users.json"
 PORT = int(os.environ.get("PORT", 3000))
 
-# ⏱ Chống spam đăng ký
+# ====== CHỐNG SPAM ======
 LAST_REQUEST = {}
-REQUEST_DELAY = 5  # giây
+REQUEST_DELAY = 3  # giây
 
 # 🔑 Khoá admin (ĐỔI CHUỖI NÀY)
 ADMIN_KEY = "12131415"
@@ -39,6 +38,13 @@ def save_users(users):
 def client_ip():
     return request.headers.get("X-Forwarded-For", request.remote_addr)
 
+def check_rate_limit(ip):
+    now = time.time()
+    if ip in LAST_REQUEST and now - LAST_REQUEST[ip] < REQUEST_DELAY:
+        return False
+    LAST_REQUEST[ip] = now
+    return True
+
 # ------------------ ROUTES ------------------
 
 @app.route("/")
@@ -50,20 +56,15 @@ def home():
 def ping():
     return jsonify({"status": "ok", "time": int(time.time())})
 
-# 📝 Đăng ký
+# ---------- REGISTER ----------
 @app.route("/register", methods=["POST"])
 def register():
     ip = client_ip()
-    now = time.time()
-
-    # 🚫 Chống spam
-    if ip in LAST_REQUEST and now - LAST_REQUEST[ip] < REQUEST_DELAY:
+    if not check_rate_limit(ip):
         return jsonify({
             "success": False,
             "msg": "Vui lòng thao tác chậm lại"
         })
-
-    LAST_REQUEST[ip] = now
 
     data = request.get_json(silent=True)
     if not data:
@@ -76,7 +77,6 @@ def register():
     password = data.get("password", "").strip()
     phone = data.get("phone", "").strip()
 
-    # ❌ Thiếu thông tin
     if not username or not password or not phone:
         return jsonify({
             "success": False,
@@ -85,7 +85,6 @@ def register():
 
     users = load_users()
 
-    # ❌ Trùng tên / SĐT
     for u in users:
         if u["username"] == username:
             return jsonify({
@@ -98,7 +97,6 @@ def register():
                 "msg": "Số điện thoại đã tồn tại"
             })
 
-    # ✅ Đăng ký thành công
     users.append({
         "username": username,
         "password": hash_password(password),
@@ -113,7 +111,56 @@ def register():
         "msg": "Đăng ký thành công"
     })
 
-# 👮 ADMIN XEM USER (MIỄN PHÍ – KHÔNG CẦN SHELL)
+# ---------- LOGIN ----------
+@app.route("/login", methods=["POST"])
+def login():
+    ip = client_ip()
+    if not check_rate_limit(ip):
+        return jsonify({
+            "success": False,
+            "event": "LOGIN_FAIL",
+            "msg": "Thao tác quá nhanh"
+        })
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({
+            "success": False,
+            "event": "LOGIN_FAIL",
+            "msg": "Dữ liệu không hợp lệ"
+        })
+
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+
+    if not username or not password:
+        return jsonify({
+            "success": False,
+            "event": "LOGIN_FAIL",
+            "msg": "Chưa điền đủ thông tin"
+        })
+
+    users = load_users()
+    hashed = hash_password(password)
+
+    for u in users:
+        if u["username"] == username and u["password"] == hashed:
+            token = secrets.token_hex(16)
+
+            return jsonify({
+                "success": True,
+                "event": "LOGIN_OK",
+                "token": token,
+                "msg": "Đăng nhập thành công"
+            })
+
+    return jsonify({
+        "success": False,
+        "event": "LOGIN_FAIL",
+        "msg": "Sai tài khoản hoặc mật khẩu"
+    })
+
+# ---------- ADMIN XEM USER ----------
 @app.route("/admin/users", methods=["GET"])
 def admin_users():
     key = request.args.get("key")
@@ -125,9 +172,8 @@ def admin_users():
         })
 
     users = load_users()
-
-    # Ẩn mật khẩu khi trả về
     safe_users = []
+
     for u in users:
         safe_users.append({
             "username": u["username"],
